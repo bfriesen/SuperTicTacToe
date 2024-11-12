@@ -1,0 +1,18 @@
+﻿@page "/"
+
+@using Blazor.Extensions
+@using Blazor.Extensions.Canvas
+@using Blazor.Extensions.Canvas.Canvas2D
+@using SuperTicTacToe.Domain
+
+<PageTitle>Super Tic Tac Toe!</PageTitle>
+
+<h1>Super Tic Tac Toe!</h1>
+
+<SuperTicTacToeBoard Width="400" Height="400" Game="Game"></SuperTicTacToeBoard>
+<button type="button" @onclick="Game.Undo">Whoops!</button>
+
+@code
+{
+    private SuperTicTacToeGame Game { get; } = new();
+}

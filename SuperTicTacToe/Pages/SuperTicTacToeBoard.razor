@@ -1,0 +1,423 @@
+﻿@using Blazor.Extensions
+@using Blazor.Extensions.Canvas
+@using Blazor.Extensions.Canvas.Canvas2D
+@using SuperTicTacToe.Domain
+
+<div @onmousemove="OnMouseMove" @onmouseleave="OnMouseLeave" @onmousedown="OnMouseDown" @onmouseup="OnMouseUp">
+    <BECanvas @ref="_canvasReference" Height="Height" Width="Width"></BECanvas>
+</div>
+
+@code {
+    private const string _defaultStokeStyle = "BLACK";
+    private const string _winLineStrokeStyle = "RED";
+    private const string _innerGameMouseDownFillColor = "#AAAAAA";
+    private const string _innerGameLastMoveFillColor = "KHAKI";
+    private const string _outerGameNextGameFillColor = "PALEGREEN";
+    private const string _unavailableFillColor = "DIMGRAY";
+    private const string _catGameFillColor = "DIMGRAY";
+    private const double _innerGamePaddingWidth = 15.0;
+    private const double _innerGamePaddingHeight = 15.0;
+    private const double _innerSpacePaddingWidth = 7.5;
+    private const double _innerSpacePaddingHeight = 7.5;
+
+    private BECanvasComponent _canvasReference = null!;
+    private (double X, double Y) _mouseLocation = (-1, -1);
+    private (int I, int J, int K, int L) _mouseDownSpace = (-1, -1, -1, -1);
+    private double? _outerGameColumnWidth;
+    private double? _outerGameRowHeight;
+    private double? _innerGameColumnWidth;
+    private double? _innerGameRowHeight;
+
+    [Parameter, EditorRequired]
+    public long Width { get; set; }
+
+    [Parameter, EditorRequired]
+    public long Height { get; set; }
+
+    [Parameter]
+    public SuperTicTacToeGame Game { get; init; } = new();
+
+    [Inject]
+    public ILogger<Home> Logger { get; init; } = null!;
+
+    private double OuterGameColumnWidth => _outerGameColumnWidth ??= Width / 3.0;
+
+    private double OuterGameRowHeight => _outerGameRowHeight ??= Height / 3.0;
+
+    private double InnerGameColumnWidth => _innerGameColumnWidth ??= (OuterGameColumnWidth - (_innerGamePaddingWidth * 2.0)) / 3.0;
+
+    private double InnerGameRowHeight => _innerGameRowHeight ??= (OuterGameRowHeight - (_innerGamePaddingHeight * 2.0)) / 3.0;
+
+    private async void OnMouseMove(MouseEventArgs args)
+    {
+        _mouseLocation = (args.OffsetX, args.OffsetY);
+        if (_mouseLocation.X >= 0 && _mouseLocation.X < Width && _mouseLocation.Y >= 0 && _mouseLocation.Y < Height)
+            await RenderGame();
+    }
+
+    private async void OnMouseLeave(MouseEventArgs args)
+    {
+        _mouseLocation = (-1, -1);
+        _mouseDownSpace = (-1, -1, -1, -1);
+        await RenderGame();
+    }
+
+    private async void OnMouseDown(MouseEventArgs args)
+    {
+        for (int outerSpace = 0; outerSpace < 9; outerSpace++)
+        {
+            if (Game.CurrentSpace is null || Game.CurrentSpace == outerSpace)
+            {
+                var i = outerSpace % 3;
+                var j = outerSpace / 3;
+
+                for (int innerSpace = 0; innerSpace < 9; innerSpace++)
+                {
+                    var k = innerSpace % 3;
+                    var l = innerSpace / 3;
+
+                    if (args.OffsetX >= (i * OuterGameColumnWidth) + _innerGamePaddingWidth + (k * InnerGameColumnWidth)
+                        && args.OffsetX < (i * OuterGameColumnWidth) + _innerGamePaddingWidth + ((k + 1) * InnerGameColumnWidth)
+                        && args.OffsetY >= (j * OuterGameRowHeight) + _innerGamePaddingHeight + (l * InnerGameRowHeight)
+                        && args.OffsetY < (j * OuterGameRowHeight) + _innerGamePaddingHeight + ((l + 1) * InnerGameRowHeight))
+                    {
+                        _mouseDownSpace = (i, j, k, l);
+                        await RenderGame();
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    private async void OnMouseUp(MouseEventArgs args)
+    {
+        if (Game.Games[(_mouseDownSpace.J * 3) + _mouseDownSpace.I].Spaces[(_mouseDownSpace.L * 3) + _mouseDownSpace.K].SpaceState == SpaceState.Open
+            && args.OffsetX >= (_mouseDownSpace.I * OuterGameColumnWidth) + _innerGamePaddingWidth + (_mouseDownSpace.K * InnerGameColumnWidth)
+            && args.OffsetX < (_mouseDownSpace.I * OuterGameColumnWidth) + _innerGamePaddingWidth + ((_mouseDownSpace.K + 1) * InnerGameColumnWidth)
+            && args.OffsetY >= (_mouseDownSpace.J * OuterGameRowHeight) + _innerGamePaddingHeight + (_mouseDownSpace.L * InnerGameRowHeight)
+            && args.OffsetY < (_mouseDownSpace.J * OuterGameRowHeight) + _innerGamePaddingHeight + ((_mouseDownSpace.L + 1) * InnerGameRowHeight))
+        {
+            var player = Game.CurrentPlayer;
+            Game.Move((_mouseDownSpace.J * 3) + _mouseDownSpace.I, (_mouseDownSpace.L * 3) + _mouseDownSpace.K);
+
+            Logger.LogInformation(
+                "// {Player} marks space [{OuterRow}, {OuterColumn}], [{InnerRow}, {InnerColumn}]\nGame.Move(({J} * 3) + {I}, ({L} * 3) + {K});\n",
+                player,
+                _mouseDownSpace.J + 1,
+                _mouseDownSpace.I + 1,
+                _mouseDownSpace.L + 1,
+                _mouseDownSpace.K + 1,
+                _mouseDownSpace.J,
+                _mouseDownSpace.I,
+                _mouseDownSpace.L,
+                _mouseDownSpace.K);
+
+            _mouseDownSpace = (-1, -1, -1, -1);
+            await RenderGame();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await RenderGame();
+    }
+
+    private async Task RenderGame()
+    {
+        var outerGameColumnWidth = Width / 3.0;
+        var outerGameRowHeight = Height / 3.0;
+        var innerGameColumnWidth = (outerGameColumnWidth - (_innerGamePaddingWidth * 2.0)) / 3.0;
+        var innerGameRowHeight = (outerGameRowHeight - (_innerGamePaddingHeight * 2.0)) / 3.0;
+
+        using Canvas2DContext context = await _canvasReference.CreateCanvas2DAsync();
+        await context.ClearRectAsync(0, 0, Width, Height);
+
+        for (int i = 0; i < 3; i++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                var thisGame = Game.Games[(j * 3) + i];
+                if (Game.CurrentSpace == (j * 3) + i)
+                {
+                    await context.SetFillStyleAsync(_outerGameNextGameFillColor);
+                    await context.FillRectAsync(i * outerGameColumnWidth, j * outerGameRowHeight, outerGameColumnWidth, outerGameRowHeight);
+                }
+
+                for (int k = 0; k < 3; k++)
+                {
+                    for (int l = 0; l < 3; l++)
+                    {
+                        var thisSpace = thisGame.Spaces[(l * 3) + k];
+
+                        if (Game.LastMove is (int OuterSpace, int InnerSpace) lastMove
+                            && lastMove.OuterSpace == (j * 3) + i
+                            && lastMove.InnerSpace == (l * 3) + k)
+                        {
+                            await context.SetFillStyleAsync(_innerGameLastMoveFillColor);
+                            await context.FillRectAsync(
+                                (i * outerGameColumnWidth) + _innerGamePaddingWidth + (k * innerGameColumnWidth),
+                                (j * outerGameRowHeight) + _innerGamePaddingHeight + (l * innerGameRowHeight),
+                                innerGameColumnWidth,
+                                innerGameRowHeight);
+                        }
+
+                        if (thisSpace.SpaceState == SpaceState.Open && !thisSpace.IsUnavailable(Game))
+                        {
+                            if (_mouseDownSpace.I == i && _mouseDownSpace.J == j && _mouseDownSpace.K == k && _mouseDownSpace.L == l)
+                            {
+                                await context.SetFillStyleAsync(_innerGameMouseDownFillColor);
+                                await context.FillRectAsync(
+                                    (i * outerGameColumnWidth) + _innerGamePaddingWidth + (k * innerGameColumnWidth),
+                                    (j * outerGameRowHeight) + _innerGamePaddingHeight + (l * innerGameRowHeight),
+                                    innerGameColumnWidth,
+                                    innerGameRowHeight);
+                            }
+                            else if ((Game.CurrentSpace is null || Game.CurrentSpace == (j * 3) + i)
+                                && _mouseLocation.X >= (i * outerGameColumnWidth) + _innerGamePaddingWidth + (k * innerGameColumnWidth)
+                                && _mouseLocation.X < (i * outerGameColumnWidth) + _innerGamePaddingWidth + ((k + 1) * innerGameColumnWidth)
+                                && _mouseLocation.Y >= (j * outerGameRowHeight) + _innerGamePaddingHeight + (l * innerGameRowHeight)
+                                && _mouseLocation.Y < (j * outerGameRowHeight) + _innerGamePaddingHeight + ((l + 1) * innerGameRowHeight))
+                            {
+                                await context.SetGlobalAlphaAsync(0.5f);
+                                await DrawInnerGlyph((SpaceState)Game.CurrentPlayer, i, j, k, l);
+                                await context.SetGlobalAlphaAsync(1.0f);
+                            }
+                        }
+
+                        await DrawInnerGlyph(thisSpace.SpaceState, i, j, k, l);
+
+                        if (thisSpace.SpaceState == SpaceState.Open && thisSpace.IsUnavailable(Game))
+                        {
+                            await context.SetFillStyleAsync(_unavailableFillColor);
+                            await context.FillRectAsync(
+                                (i * outerGameColumnWidth) + _innerGamePaddingWidth + (k * innerGameColumnWidth),
+                                (j * outerGameRowHeight) + _innerGamePaddingHeight + (l * innerGameRowHeight),
+                                innerGameColumnWidth,
+                                innerGameRowHeight);
+                        }
+                    }
+                }
+
+                await DrawOuterGlyph(thisGame, i, j);
+
+                if (thisGame.GameState == GameState.Cat)
+                {
+                    await context.SetGlobalAlphaAsync(0.5f);
+                    await context.SetFillStyleAsync(_catGameFillColor);
+                    await context.FillRectAsync(i * outerGameColumnWidth, j * outerGameRowHeight, outerGameColumnWidth, outerGameRowHeight);
+                    await context.SetGlobalAlphaAsync(1.0f);
+                }
+            }
+        }
+
+        await context.SetLineWidthAsync(10);
+
+        await context.BeginPathAsync();
+        await context.MoveToAsync(outerGameColumnWidth, 0);
+        await context.LineToAsync(outerGameColumnWidth, Height);
+        await context.StrokeAsync();
+
+        await context.BeginPathAsync();
+        await context.MoveToAsync(outerGameColumnWidth * 2.0, 0);
+        await context.LineToAsync(outerGameColumnWidth * 2.0, Height);
+        await context.StrokeAsync();
+
+        await context.BeginPathAsync();
+        await context.MoveToAsync(0, outerGameRowHeight);
+        await context.LineToAsync(Width, outerGameRowHeight);
+        await context.StrokeAsync();
+
+        await context.BeginPathAsync();
+        await context.MoveToAsync(0, outerGameRowHeight * 2.0);
+        await context.LineToAsync(Width, outerGameRowHeight * 2.0);
+        await context.StrokeAsync();
+
+        await context.SetLineWidthAsync(5);
+
+        for (int i = 0; i < 3; i++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                await context.BeginPathAsync();
+                await context.MoveToAsync((i * outerGameColumnWidth) + _innerGamePaddingWidth + innerGameColumnWidth, (j * outerGameRowHeight) + _innerGamePaddingHeight);
+                await context.LineToAsync((i * outerGameColumnWidth) + _innerGamePaddingWidth + innerGameColumnWidth, ((j + 1) * outerGameRowHeight) - _innerGamePaddingHeight);
+                await context.StrokeAsync();
+
+                await context.BeginPathAsync();
+                await context.MoveToAsync((i * outerGameColumnWidth) + _innerGamePaddingWidth + (innerGameColumnWidth * 2.0), (j * outerGameRowHeight) + _innerGamePaddingHeight);
+                await context.LineToAsync((i * outerGameColumnWidth) + _innerGamePaddingWidth + (innerGameColumnWidth * 2.0), ((j + 1) * outerGameRowHeight) - _innerGamePaddingHeight);
+                await context.StrokeAsync();
+
+                await context.BeginPathAsync();
+                await context.MoveToAsync((i * outerGameColumnWidth) + _innerGamePaddingWidth, (j * outerGameRowHeight) + _innerGamePaddingHeight + innerGameRowHeight);
+                await context.LineToAsync(((i + 1) * outerGameColumnWidth) - _innerGamePaddingWidth, (j * outerGameRowHeight) + _innerGamePaddingHeight + innerGameRowHeight);
+                await context.StrokeAsync();
+
+                await context.BeginPathAsync();
+                await context.MoveToAsync((i * outerGameColumnWidth) + _innerGamePaddingWidth, (j * outerGameRowHeight) + _innerGamePaddingHeight + (innerGameRowHeight * 2.0));
+                await context.LineToAsync(((i + 1) * outerGameColumnWidth) - _innerGamePaddingWidth, (j * outerGameRowHeight) + _innerGamePaddingHeight + (innerGameRowHeight * 2.0));
+                await context.StrokeAsync();
+
+                var thisGame = Game.Games[(j * 3) + i];
+                if (thisGame.WinningSpaces != null)
+                    await DrawWinningLine(
+                        thisGame.WinningSpaces,
+                        ((i * outerGameColumnWidth) + _innerGamePaddingWidth,
+                            (j * outerGameRowHeight) + _innerGamePaddingHeight,
+                            outerGameColumnWidth - (2 * _innerGamePaddingWidth),
+                            outerGameRowHeight - (2 * _innerGamePaddingHeight)),
+                        12.5f);
+            }
+        }
+
+        if (Game.WinningSpaces != null)
+            await DrawWinningLine(Game.WinningSpaces, (0, 0, Width, Height), 20);
+
+        async Task DrawOuterGlyph(TicTacToeGame thisGame, int i, int j)
+        {
+            if (thisGame.SpaceState != SpaceState.Open)
+            {
+                var centerX = ((i * outerGameColumnWidth) + ((i + 1) * outerGameColumnWidth)) / 2.0;
+                var centerY = ((j * outerGameRowHeight) + ((j + 1) * outerGameRowHeight)) / 2.0;
+                var size = Math.Min((outerGameRowHeight - (2 * _innerGamePaddingHeight)) / 2, (outerGameColumnWidth - (2 * _innerGamePaddingWidth)) / 2);
+
+                await context.SetLineWidthAsync(7.5f);
+                await context.SetGlobalAlphaAsync(0.5f);
+
+                if (thisGame.SpaceState == SpaceState.X)
+                {
+                    await context.BeginPathAsync();
+                    await context.MoveToAsync(centerX - size, centerY - size);
+                    await context.LineToAsync(centerX + size, centerY + size);
+                    await context.StrokeAsync();
+
+                    await context.BeginPathAsync();
+                    await context.MoveToAsync(centerX - size, centerY + size);
+                    await context.LineToAsync(centerX - 2.52, centerY + 2.52);
+                    await context.StrokeAsync();
+
+                    await context.BeginPathAsync();
+                    await context.MoveToAsync(centerX + 2.54, centerY - 2.54);
+                    await context.LineToAsync(centerX + size, centerY - size);
+                    await context.StrokeAsync();
+                }
+                else if (thisGame.SpaceState == SpaceState.O)
+                {
+                    await context.BeginPathAsync();
+                    await context.ArcAsync(centerX, centerY, size, 0, 2 * Math.PI);
+                    await context.StrokeAsync();
+                }
+
+                await context.SetGlobalAlphaAsync(1.0f);
+            }
+        }
+
+        async Task DrawInnerGlyph(SpaceState spaceState, int i, int j, int k, int l)
+        {
+            if (spaceState != SpaceState.Open)
+            {
+                var centerX = ((i * outerGameColumnWidth) + _innerGamePaddingWidth + (k * innerGameColumnWidth) + _innerSpacePaddingWidth
+                    + (i * outerGameColumnWidth) + _innerGamePaddingWidth + ((k + 1) * innerGameColumnWidth - _innerSpacePaddingWidth))
+                    / 2.0;
+                var centerY = ((j * outerGameRowHeight) + _innerGamePaddingHeight + ((l + 1) * innerGameRowHeight) - _innerSpacePaddingHeight
+                    + (j * outerGameRowHeight) + _innerGamePaddingHeight + (l * innerGameRowHeight) + _innerSpacePaddingHeight)
+                / 2.0;
+                var size = Math.Min((innerGameRowHeight - (2 * _innerSpacePaddingHeight)) / 2, (innerGameColumnWidth - (2 * _innerSpacePaddingWidth)) / 2);
+
+                await context.SetLineWidthAsync(3.75f);
+
+                if (spaceState == SpaceState.X)
+                {
+                    await context.BeginPathAsync();
+                    await context.MoveToAsync(centerX - size, centerY - size);
+                    await context.LineToAsync(centerX + size, centerY + size);
+                    await context.StrokeAsync();
+
+                    await context.BeginPathAsync();
+                    await context.MoveToAsync(centerX - size, centerY + size);
+                    await context.LineToAsync(centerX + size, centerY - size);
+                    await context.StrokeAsync();
+                }
+                else // SpaceState.O
+                {
+                    await context.BeginPathAsync();
+                    await context.ArcAsync(centerX, centerY, size, 0, 2 * Math.PI);
+                    await context.StrokeAsync();
+                }
+            }
+        }
+
+        async Task DrawWinningLine(IReadOnlyList<int> winningSpaces, (double X, double Y, double Width, double Height) bounds, float lineWidth)
+        {
+            var previousLineWidth = context.LineWidth;
+
+            double moveToX, moveToY, lineToX, lineToY;
+
+            if (winningSpaces is [2, 4, 6]) // diagonal /
+            {
+                moveToX = bounds.X;
+                moveToY = bounds.Y + bounds.Height;
+                lineToX = bounds.X + bounds.Width;
+                lineToY = bounds.Y;
+            }
+            else if (winningSpaces is [0, 4, 8]) // diagonal \
+            {
+                moveToX = bounds.X;
+                lineToX = bounds.X + bounds.Width;
+
+                moveToY = bounds.Y;
+                lineToY = bounds.Y + bounds.Height;
+            }
+            else if (winningSpaces is [0, 1, 2] or [3, 4, 5] or [6, 7, 8]) // horizontal
+            {
+                moveToX = bounds.X;
+                lineToX = bounds.X + bounds.Width;
+
+                int row;
+                if (winningSpaces is [0, 1, 2])
+                    row = 0;
+                else if (winningSpaces is [3, 4, 5])
+                    row = 1;
+                else
+                    row = 2;
+
+                moveToY = bounds.Y + (row * bounds.Height / 3) + (bounds.Height / 6);
+                lineToY = moveToY;
+            }
+            else if (winningSpaces is [0, 3, 6] or [1, 4, 7] or [2, 5, 8]) // vertical
+            {
+                moveToY = bounds.Y;
+                lineToY = bounds.Y + bounds.Height;
+
+                int column;
+                if (winningSpaces is [0, 3, 6])
+                    column = 0;
+                else if (winningSpaces is [1, 4, 7])
+                    column = 1;
+                else
+                    column = 2;
+
+                moveToX = bounds.X + (column * bounds.Width / 3) + (bounds.Height / 6);
+                lineToX = moveToX;
+            }
+            else
+            {
+                throw new InvalidOperationException("Invalid WinningSpaces.");
+            }
+
+            await context.SetGlobalAlphaAsync(0.5f);
+            await context.SetStrokeStyleAsync(_winLineStrokeStyle);
+            await context.SetLineWidthAsync(lineWidth);
+            await context.BeginPathAsync();
+            await context.MoveToAsync(moveToX, moveToY);
+            await context.LineToAsync(lineToX, lineToY);
+            await context.StrokeAsync();
+            await context.SetStrokeStyleAsync(_defaultStokeStyle);
+            await context.SetGlobalAlphaAsync(1.0f);
+
+            await context.SetLineWidthAsync(previousLineWidth);
+        }
+    }
+}
